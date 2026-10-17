@@ -2,10 +2,13 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY api/main.py /app/main.py
+COPY db/ /app/db/
+
+ENV VITALS_DB_PATH=/app/data/vitals.db
 
 EXPOSE 8000
 

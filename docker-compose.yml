@@ -1,8 +1,22 @@
 services:
+  generator:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - generator
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/patients')"]
       interval: 10s
