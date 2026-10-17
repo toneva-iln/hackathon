@@ -1,6 +1,11 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 
-const WS_URL = "ws://localhost:8000/ws";
+const API_BASE = import.meta.env.VITE_API_URL || "";
+const WS_URL =
+  import.meta.env.VITE_WS_URL ||
+  (API_BASE
+    ? API_BASE.replace(/^http/, "ws") + "/ws"
+    : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`);
 const RECONNECT_DELAY = 2000;
 
 export function useVitalsStream() {
@@ -60,7 +65,7 @@ export function useVitalsStream() {
   }, []);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/patients")
+    fetch(`${API_BASE}/api/patients`)
       .then((r) => r.json())
       .then((list) => {
         const map = {};

@@ -2,7 +2,17 @@
 
 Real-time patient vitals monitoring platform with live anomaly detection. Simulates blood pressure cuffs, pulse oximeters, wearables, and multiparameter monitors streaming continuous vital signs through a FastAPI backend to a React dashboard via WebSocket.
 
-## Quick Start
+## Quick Start (Docker)
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:3000 — the dashboard connects automatically, no page refresh needed.
+
+The nginx proxy handles API and WebSocket routing to the backend container.
+
+## Quick Start (Local Dev)
 
 ```bash
 # Terminal 1 — API (from hackathon/)
@@ -14,34 +24,41 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 — the dashboard connects automatically, no page refresh needed.
+Open http://localhost:5173 in local dev mode.
 
 ## Architecture
 
 ```
 hackathon/
+├── docker-compose.yml            # Runs API + frontend containers
 ├── api/
-│   ├── main.py              # FastAPI app — simulation, anomaly detection, WebSocket
+│   ├── Dockerfile
+│   ├── main.py                   # FastAPI app — simulation, anomaly detection, WebSocket
 │   └── requirements.txt
 ├── frontend/
+│   ├── Dockerfile                # Multi-stage: Node build → nginx
+│   ├── nginx.conf                # Proxies /api and /ws to the API container
+│   ├── .env.development          # Points at localhost:8000 for local dev
+│   ├── .env.production           # Empty — uses relative URLs through nginx
 │   └── src/
-│       ├── App.jsx           # Router (Dashboard + Patient Detail)
+│       ├── App.jsx               # Router (Dashboard + Patient Detail)
 │       ├── hooks/
-│       │   └── useVitalsStream.js   # WebSocket hook — real-time state
+│       │   └── useVitalsStream.js    # WebSocket hook — real-time state
 │       └── components/
 │           ├── Dashboard.jsx         # Patient list with alert badges
 │           └── PatientDetail.jsx     # Live charts + alert history
 └── scripts/
-    └── generate_vitals_stream.py    # Standalone CLI data generator
+    └── generate_vitals_stream.py     # Standalone CLI data generator
 ```
 
 ## Features
 
 - **Real-time streaming** — WebSocket pushes vitals every 2 seconds, no polling
 - **Live anomaly detection** — threshold-based alerts for all 6 vitals + sepsis screening (SIRS criteria)
-- **Dashboard** — patient list sorted by severity, pulsing alert badges, live vital pills
+- **Dashboard** — patient cards in stable positions with pulsing alert badges and live vital pills
 - **Patient detail** — 6 live-updating Recharts line charts with threshold reference lines, active alert banner, full alert history with clinical descriptions
 - **Auto-reconnect** — WebSocket reconnects on disconnect with visual indicator
+- **Dockerized** — single `docker compose up` runs everything behind an nginx reverse proxy
 
 ## Anomaly Detection
 
