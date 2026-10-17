@@ -1,6 +1,31 @@
 # Vitals Streaming Platform
 
-Real-time patient vitals monitoring platform with live anomaly detection. Simulates blood pressure cuffs, pulse oximeters, wearables, and multiparameter monitors streaming continuous vital signs through a FastAPI backend to a React dashboard via WebSocket.
+Real-time patient vitals monitoring platform with live anomaly detection. Simulates blood pressure cuffs, pulse oximeters, wearables, and multiparameter monitors streaming continuous vital signs through a shared SQLite database, consumed by a FastAPI backend and pushed to a React dashboard via WebSocket.
+
+## Quick Start (Local Dev)
+
+```bash
+# 1. Install Python dependencies
+pip install -r api/requirements.txt
+
+# 2. Run database migration
+alembic upgrade head
+
+# 3. Seed patients
+python scripts/seed_patients.py
+
+# 4. Start the vitals generator (writes to DB every 2 seconds)
+python scripts/generate_vitals_stream.py &
+
+# 5. Start the API (reads from DB, pushes to frontend via WebSocket)
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 6. Start the frontend (separate terminal, from hackathon/frontend/)
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 — the dashboard connects automatically, no page refresh needed.
 
 ## Quick Start (Docker)
 
@@ -8,52 +33,112 @@ Real-time patient vitals monitoring platform with live anomaly detection. Simula
 docker compose up --build
 ```
 
-Open http://localhost:3000 — the dashboard connects automatically, no page refresh needed.
-
-The nginx proxy handles API and WebSocket routing to the backend container.
-
-## Quick Start (Local Dev)
-
-```bash
-# Terminal 1 — API (from hackathon/)
-pip install -r api/requirements.txt
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Terminal 2 — Frontend (from hackathon/frontend/)
-npm install
-npm run dev
-```
-
-Open http://localhost:5173 in local dev mode.
+Open http://localhost:3000.
 
 ## Architecture
 
 ```
 hackathon/
-├── docker-compose.yml            # Runs API + frontend containers
+├── docker-compose.yml
+├── alembic.ini                       # Alembic config (points at data/vitals.db)
+├── data/
+│   └── vitals.db                     # Shared SQLite database (gitignored)
+├── db/
+│   ├── __init__.py
+│   ├── database.py                   # DB connection helpers + raw schema init
+│   ├── models.py                     # SQLAlchemy ORM models (Patient, VitalsReading)
+│   └── migrations/                   # Alembic migrations
+│       └── versions/
 ├── api/
 │   ├── Dockerfile
-│   ├── main.py                   # FastAPI app — simulation, anomaly detection, WebSocket
+│   ├── main.py                       # FastAPI — polls DB, detects anomalies, WebSocket
 │   └── requirements.txt
 ├── frontend/
-│   ├── Dockerfile                # Multi-stage: Node build → nginx
-│   ├── nginx.conf                # Proxies /api and /ws to the API container
-│   ├── .env.development          # Points at localhost:8000 for local dev
-│   ├── .env.production           # Empty — uses relative URLs through nginx
+│   ├── Dockerfile                    # Multi-stage: Node build → nginx
+│   ├── nginx.conf                    # Proxies /api and /ws to API container
 │   └── src/
-│       ├── App.jsx               # Router (Dashboard + Patient Detail)
+│       ├── App.jsx                   # Router (Dashboard + Patient Detail)
 │       ├── hooks/
 │       │   └── useVitalsStream.js    # WebSocket hook — real-time state
 │       └── components/
 │           ├── Dashboard.jsx         # Patient list with alert badges
 │           └── PatientDetail.jsx     # Live charts + alert history
 └── scripts/
-    └── generate_vitals_stream.py     # Standalone CLI data generator
+    ├── seed_patients.py              # Seeds patients table with 12 RPM patients
+    └── generate_vitals_stream.py     # Reads patients from DB, writes vitals to DB
+```
+
+## Data Flow
+
+```
+seed_patients.py → [patients table]
+                        ↓
+generate_vitals_stream.py → [vitals_readings table]
+                                     ↓
+                              api/main.py (polls DB every 1s)
+                                     ↓
+                              WebSocket broadcast
+                                     ↓
+                              React dashboard (live updates)
+```
+
+Both the generator and the API read patients from the same `patients` table, so IDs and names are always aligned.
+
+## Database
+
+SQLite with WAL mode, stored at `data/vitals.db`. Managed by Alembic migrations.
+
+### Patients table
+
+| Column | Type | Description |
+|---|---|---|
+| id | TEXT PK | UUID |
+| first_name | TEXT | Patient first name |
+| last_name | TEXT | Patient last name |
+| date_of_birth | TEXT | ISO date (YYYY-MM-DD) |
+| sex | TEXT | M or F |
+| room | TEXT | Ward-room (e.g. B-400) |
+| primary_diagnosis | TEXT | Reason for RPM enrollment |
+| admission_date | TEXT | ISO date |
+| device_id | TEXT | Assigned device ID |
+| device_type | TEXT | Device model |
+| created_at | TEXT | Auto-populated |
+
+### Vitals Readings table
+
+| Column | Type | Description |
+|---|---|---|
+| id | TEXT PK | UUID per reading |
+| patient_id | TEXT FK | References patients.id |
+| timestamp | TEXT | ISO timestamp (UTC) |
+| heart_rate | REAL | bpm |
+| systolic_bp | REAL | mmHg |
+| diastolic_bp | REAL | mmHg |
+| spo2 | REAL | % |
+| temperature | REAL | °F |
+| respiratory_rate | REAL | breaths/min |
+| anomaly | TEXT | Anomaly profile name or NULL |
+| device_id | TEXT | Device that produced the reading |
+| device_type | TEXT | Device model |
+
+### ORM Models
+
+`db/models.py` defines SQLAlchemy models `Patient` and `VitalsReading` that mirror these tables.
+
+### Migrations
+
+```bash
+# Run pending migrations
+alembic upgrade head
+
+# Create a new migration after model changes
+alembic revision --autogenerate -m "description"
 ```
 
 ## Features
 
-- **Real-time streaming** — WebSocket pushes vitals every 2 seconds, no polling
+- **Shared database** — generator and API both use the same SQLite `patients` table; no ID drift
+- **Real-time streaming** — API polls DB for new readings every second, pushes via WebSocket
 - **Live anomaly detection** — threshold-based alerts for all 6 vitals + sepsis screening (SIRS criteria)
 - **Dashboard** — patient cards in stable positions with pulsing alert badges and live vital pills
 - **Patient detail** — 6 live-updating Recharts line charts with threshold reference lines, active alert banner, full alert history with clinical descriptions
@@ -85,13 +170,22 @@ Threshold-based detection with two severity levels:
 | GET | `/api/patients/{id}/alerts` | Active + historical alerts |
 | WS | `/ws` | Real-time vitals + alert stream |
 
-## Synthetic Data Generator (Standalone)
+## Synthetic Data Generator
 
-`scripts/generate_vitals_stream.py` produces JSON-lines output independently of the API.
+`scripts/generate_vitals_stream.py` reads patients from the database and writes vitals readings back.
 
 ```bash
-python scripts/generate_vitals_stream.py --patients 10 --max-readings 1000 --output vitals.jsonl
-python scripts/generate_vitals_stream.py --seed 42 --max-readings 50
+# Default: all patients, 2s interval, 15% anomaly rate
+python scripts/generate_vitals_stream.py
+
+# Also emit JSON-lines to stdout
+python scripts/generate_vitals_stream.py --stdout
+
+# Finite batch
+python scripts/generate_vitals_stream.py --max-readings 100
+
+# Custom anomaly rate
+python scripts/generate_vitals_stream.py --anomaly-rate 0.3
 ```
 
 Six anomaly profiles: `hypertensive_crisis`, `bradycardia`, `tachycardia`, `hypoxemia`, `fever`, `sepsis_early`. See `--help` for all options.

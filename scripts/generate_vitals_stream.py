@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """Synthetic vitals streaming data generator.
 
-Produces a continuous JSON-lines stream of patient vital signs suitable for
-feeding into APIs under development. Each line is a self-contained JSON object.
-
-Vitals generated:
-  - heart_rate (bpm)
-  - systolic_bp / diastolic_bp (mmHg)
-  - spo2 (%)
-  - temperature (°F)
-  - respiratory_rate (breaths/min)
+Reads patients from the shared SQLite database and continuously writes
+vitals readings into the vitals_readings table. Also emits JSON-lines
+to stdout (or a file) for debugging.
 
 Usage:
-  # Stream 5 patients, one reading per second, 20% anomaly chance
-  python scripts/generate_vitals_stream.py --patients 5 --interval 1.0 --anomaly-rate 0.2
+  # Seed patients first
+  python scripts/seed_patients.py
 
-  # Emit 100 readings total and exit
-  python scripts/generate_vitals_stream.py --patients 3 --max-readings 100
+  # Stream vitals into the DB (and stdout), one reading per second
+  python scripts/generate_vitals_stream.py
 
-  # Write to file instead of stdout
-  python scripts/generate_vitals_stream.py --patients 10 --output vitals.jsonl
+  # Custom interval and anomaly rate
+  python scripts/generate_vitals_stream.py --interval 2.0 --anomaly-rate 0.2
+
+  # Finite batch
+  python scripts/generate_vitals_stream.py --max-readings 100
+
+  # Also write JSON-lines to a file
+  python scripts/generate_vitals_stream.py --output vitals.jsonl
 """
 
 from __future__ import annotations
@@ -33,17 +33,12 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TextIO
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-@dataclass
-class VitalBaseline:
-    heart_rate: float = 75.0
-    systolic_bp: float = 120.0
-    diastolic_bp: float = 80.0
-    spo2: float = 98.0
-    temperature: float = 98.6
-    respiratory_rate: float = 16.0
+from db.database import get_connection, init_db
 
 
 ANOMALY_PROFILES = {
@@ -75,21 +70,22 @@ ANOMALY_PROFILES = {
     },
 }
 
-DEVICE_TYPES = [
-    "bp_cuff_omron_x5",
-    "pulse_ox_masimo_radical",
-    "temp_braun_thermoscan",
-    "multiparams_philips_mx800",
-    "wearable_apple_watch_ultra",
-    "wearable_fitbit_sense",
-]
+
+@dataclass
+class VitalBaseline:
+    heart_rate: float = 75.0
+    systolic_bp: float = 120.0
+    diastolic_bp: float = 80.0
+    spo2: float = 98.0
+    temperature: float = 98.6
+    respiratory_rate: float = 16.0
 
 
 @dataclass
 class PatientSimulator:
-    patient_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    device_id: str = field(default_factory=lambda: f"DEV-{uuid.uuid4().hex[:8].upper()}")
-    device_type: str = field(default_factory=lambda: random.choice(DEVICE_TYPES))
+    patient_id: str = ""
+    device_id: str = ""
+    device_type: str = ""
     baseline: VitalBaseline = field(default_factory=VitalBaseline)
     _tick: int = 0
     _active_anomaly: str | None = None
@@ -172,65 +168,134 @@ class PatientSimulator:
             "device_id": self.device_id,
             "device_type": self.device_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "vitals": {
-                "heart_rate": {"value": round(hr, 1), "unit": "bpm"},
-                "systolic_bp": {"value": round(sys_bp, 1), "unit": "mmHg"},
-                "diastolic_bp": {"value": round(dia_bp, 1), "unit": "mmHg"},
-                "spo2": {"value": round(spo2, 1), "unit": "%"},
-                "temperature": {"value": round(temp, 1), "unit": "°F"},
-                "respiratory_rate": {"value": round(rr, 1), "unit": "breaths/min"},
-            },
+            "heart_rate": round(hr, 1),
+            "systolic_bp": round(sys_bp, 1),
+            "diastolic_bp": round(dia_bp, 1),
+            "spo2": round(spo2, 1),
+            "temperature": round(temp, 1),
+            "respiratory_rate": round(rr, 1),
             "anomaly": self._active_anomaly,
-            "metadata": {
-                "generator": "caregentic-vitals-synth",
-                "version": "1.0.0",
-                "tick": self._tick,
-            },
         }
+
+
+def load_patients_from_db() -> list[PatientSimulator]:
+    conn = get_connection()
+    rows = conn.execute("SELECT id, device_id, device_type FROM patients ORDER BY last_name, first_name").fetchall()
+    conn.close()
+
+    if not rows:
+        print("ERROR: No patients in the database. Run `python scripts/seed_patients.py` first.", file=sys.stderr)
+        sys.exit(1)
+
+    simulators = []
+    for row in rows:
+        sim = PatientSimulator(
+            patient_id=row["id"],
+            device_id=row["device_id"],
+            device_type=row["device_type"],
+        )
+        simulators.append(sim)
+
+    print(f"Loaded {len(simulators)} patients from database.", file=sys.stderr)
+    return simulators
+
+
+def write_reading_to_db(conn, reading: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO vitals_readings (id, patient_id, timestamp, heart_rate, systolic_bp, diastolic_bp, spo2, temperature, respiratory_rate, anomaly, device_id, device_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            reading["reading_id"],
+            reading["patient_id"],
+            reading["timestamp"],
+            reading["heart_rate"],
+            reading["systolic_bp"],
+            reading["diastolic_bp"],
+            reading["spo2"],
+            reading["temperature"],
+            reading["respiratory_rate"],
+            reading["anomaly"],
+            reading["device_id"],
+            reading["device_type"],
+        ),
+    )
+
+
+def reading_to_jsonl(reading: dict) -> dict:
+    """Convert a flat reading to the JSON-lines output format."""
+    return {
+        "reading_id": reading["reading_id"],
+        "patient_id": reading["patient_id"],
+        "device_id": reading["device_id"],
+        "device_type": reading["device_type"],
+        "timestamp": reading["timestamp"],
+        "vitals": {
+            "heart_rate": {"value": reading["heart_rate"], "unit": "bpm"},
+            "systolic_bp": {"value": reading["systolic_bp"], "unit": "mmHg"},
+            "diastolic_bp": {"value": reading["diastolic_bp"], "unit": "mmHg"},
+            "spo2": {"value": reading["spo2"], "unit": "%"},
+            "temperature": {"value": reading["temperature"], "unit": "°F"},
+            "respiratory_rate": {"value": reading["respiratory_rate"], "unit": "breaths/min"},
+        },
+        "anomaly": reading["anomaly"],
+    }
 
 
 def stream_vitals(
     *,
-    num_patients: int,
     interval: float,
     anomaly_rate: float,
     max_readings: int | None,
-    output: TextIO,
+    output: TextIO | None,
     seed: int | None,
 ) -> None:
     if seed is not None:
         random.seed(seed)
 
-    patients = [PatientSimulator() for _ in range(num_patients)]
+    init_db()
+    simulators = load_patients_from_db()
+    conn = get_connection()
     total = 0
 
     try:
         while True:
-            for patient in patients:
-                reading = patient.generate_reading(anomaly_rate)
-                output.write(json.dumps(reading) + "\n")
-                output.flush()
+            for sim in simulators:
+                reading = sim.generate_reading(anomaly_rate)
+
+                write_reading_to_db(conn, reading)
+
+                if output:
+                    output.write(json.dumps(reading_to_jsonl(reading)) + "\n")
+                    output.flush()
+
                 total += 1
                 if max_readings and total >= max_readings:
+                    conn.commit()
                     return
+
+            conn.commit()
+
             if interval > 0:
                 time.sleep(interval)
     except KeyboardInterrupt:
-        pass
+        conn.commit()
+    finally:
+        conn.close()
+
+    print(f"\nWrote {total} readings to database.", file=sys.stderr)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate synthetic vitals streaming data (JSON-lines)."
-    )
-    parser.add_argument(
-        "--patients", type=int, default=5, help="Number of simulated patients (default: 5)"
+        description="Generate synthetic vitals data into the shared SQLite database."
     )
     parser.add_argument(
         "--interval",
         type=float,
-        default=1.0,
-        help="Seconds between reading batches (default: 1.0, 0 for no delay)",
+        default=2.0,
+        help="Seconds between reading batches (default: 2.0, 0 for no delay)",
     )
     parser.add_argument(
         "--anomaly-rate",
@@ -248,20 +313,27 @@ def main() -> None:
         "--output",
         type=str,
         default=None,
-        help="Output file path (default: stdout)",
+        help="Also write JSON-lines to this file (default: stdout only)",
+    )
+    parser.add_argument(
+        "--stdout",
+        action="store_true",
+        default=False,
+        help="Also emit JSON-lines to stdout",
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="Random seed for reproducibility"
     )
     args = parser.parse_args()
 
-    out: TextIO = sys.stdout
-    if args.output:
+    out: TextIO | None = None
+    if args.stdout:
+        out = sys.stdout
+    elif args.output:
         out = open(args.output, "w")
 
     try:
         stream_vitals(
-            num_patients=args.patients,
             interval=args.interval,
             anomaly_rate=args.anomaly_rate,
             max_readings=args.max_readings,
@@ -269,7 +341,7 @@ def main() -> None:
             seed=args.seed,
         )
     finally:
-        if out is not sys.stdout:
+        if out and out is not sys.stdout:
             out.close()
 
 

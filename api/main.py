@@ -1,6 +1,7 @@
 """Vitals streaming API.
 
-Ingests synthetic vitals from the generator, detects anomalies, and pushes
+Reads patients and vitals from the shared SQLite database (populated by
+scripts/generate_vitals_stream.py), detects anomalies, and pushes
 real-time updates to connected frontends via WebSocket.
 """
 
@@ -8,59 +9,47 @@ from __future__ import annotations
 
 import asyncio
 import math
-import random
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    names = random.sample(PATIENT_NAMES, NUM_PATIENTS)
-    for name in names:
-        pid = str(uuid.uuid4())
-        sim = PatientSimulator(pid, name)
-        simulators.append(sim)
-        patients[pid] = {
-            "patient_id": pid,
-            "name": name,
-            "age": sim.age,
-            "room": sim.room,
-            "device_id": sim.device_id,
-            "device_type": sim.device_type,
-            "status": "stable",
-        }
-    task = asyncio.create_task(_simulation_loop())
-    yield
-    task.cancel()
+import sqlite3
+import os
 
-
-app = FastAPI(title="Vitals Streaming API", lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+DB_PATH = os.environ.get(
+    "VITALS_DB_PATH",
+    str(Path(__file__).resolve().parent.parent / "data" / "vitals.db"),
 )
 
+
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
 # ---------------------------------------------------------------------------
-# In-memory stores
+# In-memory caches (populated from DB, kept current by the poll loop)
 # ---------------------------------------------------------------------------
 
 patients: dict[str, dict[str, Any]] = {}
 vitals_history: dict[str, list[dict]] = defaultdict(list)
 active_alerts: dict[str, list[dict]] = defaultdict(list)
 alert_history: dict[str, list[dict]] = defaultdict(list)
+last_seen_ts: dict[str, str] = {}
 
 MAX_HISTORY = 300
+POLL_INTERVAL = 1.0
 
 # ---------------------------------------------------------------------------
-# Anomaly detection thresholds
+# Anomaly detection
 # ---------------------------------------------------------------------------
 
 THRESHOLDS = {
@@ -117,6 +106,26 @@ SEPSIS_SCREEN_CRITERIA = {
 }
 
 
+def row_to_reading(row: sqlite3.Row) -> dict:
+    """Convert a DB row into the reading dict used throughout the API."""
+    return {
+        "reading_id": row["id"],
+        "patient_id": row["patient_id"],
+        "device_id": row["device_id"],
+        "device_type": row["device_type"],
+        "timestamp": row["timestamp"],
+        "vitals": {
+            "heart_rate": {"value": row["heart_rate"], "unit": "bpm"},
+            "systolic_bp": {"value": row["systolic_bp"], "unit": "mmHg"},
+            "diastolic_bp": {"value": row["diastolic_bp"], "unit": "mmHg"},
+            "spo2": {"value": row["spo2"], "unit": "%"},
+            "temperature": {"value": row["temperature"], "unit": "°F"},
+            "respiratory_rate": {"value": row["respiratory_rate"], "unit": "breaths/min"},
+        },
+        "anomaly": row["anomaly"],
+    }
+
+
 def detect_anomalies(reading: dict) -> list[dict]:
     alerts = []
     vitals = reading["vitals"]
@@ -158,7 +167,6 @@ def detect_anomalies(reading: dict) -> list[dict]:
                 "reading_id": reading["reading_id"],
             })
 
-    # Sepsis screening
     hits = sum(
         1 for vital_name, check in SEPSIS_SCREEN_CRITERIA.items()
         if vital_name in vitals and check(vitals[vital_name]["value"])
@@ -214,157 +222,113 @@ manager = ConnectionManager()
 
 
 # ---------------------------------------------------------------------------
-# Built-in vitals simulator (runs in-process, no external script needed)
+# Load patients from DB and poll for new vitals readings
 # ---------------------------------------------------------------------------
 
-DEVICE_TYPES = [
-    "bp_cuff_omron_x5",
-    "pulse_ox_masimo_radical",
-    "temp_braun_thermoscan",
-    "multiparams_philips_mx800",
-    "wearable_apple_watch_ultra",
-    "wearable_fitbit_sense",
-]
+def load_patients() -> None:
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, first_name, last_name, date_of_birth, sex, room, "
+        "primary_diagnosis, admission_date, device_id, device_type "
+        "FROM patients ORDER BY last_name, first_name"
+    ).fetchall()
+    conn.close()
 
-PATIENT_NAMES = [
-    "Eleanor Vance", "Marcus Chen", "Sofia Rodriguez", "James Okafor",
-    "Amara Patel", "Henrik Lindqvist", "Yuki Tanaka", "Olga Petrova",
-    "David Mensah", "Claire Dubois", "Raj Krishnan", "Fatima Al-Rashid",
-]
-
-ANOMALY_PROFILES = {
-    "hypertensive_crisis": {
-        "systolic_bp": (180, 220), "diastolic_bp": (110, 140), "heart_rate": (90, 130),
-    },
-    "bradycardia": {"heart_rate": (30, 50)},
-    "tachycardia": {"heart_rate": (120, 180)},
-    "hypoxemia": {"spo2": (82, 90), "respiratory_rate": (22, 35)},
-    "fever": {"temperature": (101.0, 104.5), "heart_rate": (90, 120)},
-    "sepsis_early": {
-        "heart_rate": (95, 130), "temperature": (100.5, 103.5),
-        "respiratory_rate": (22, 30), "systolic_bp": (85, 100), "spo2": (90, 95),
-    },
-}
-
-
-class PatientSimulator:
-    def __init__(self, patient_id: str, name: str) -> None:
-        self.patient_id = patient_id
-        self.name = name
-        self.device_id = f"DEV-{uuid.uuid4().hex[:8].upper()}"
-        self.device_type = random.choice(DEVICE_TYPES)
-        self.age = random.randint(28, 85)
-        self.room = f"{random.choice(['A', 'B', 'C', 'D'])}-{random.randint(100, 450)}"
-        self.baseline = {
-            "heart_rate": random.gauss(75, 8),
-            "systolic_bp": random.gauss(120, 12),
-            "diastolic_bp": random.gauss(80, 8),
-            "spo2": min(100.0, random.gauss(97.5, 1.0)),
-            "temperature": random.gauss(98.6, 0.4),
-            "respiratory_rate": random.gauss(16, 2),
+    for row in rows:
+        pid = row["id"]
+        patients[pid] = {
+            "patient_id": pid,
+            "name": f"{row['first_name']} {row['last_name']}",
+            "first_name": row["first_name"],
+            "last_name": row["last_name"],
+            "date_of_birth": row["date_of_birth"],
+            "sex": row["sex"],
+            "age": _calculate_age(row["date_of_birth"]),
+            "room": row["room"],
+            "primary_diagnosis": row["primary_diagnosis"],
+            "admission_date": row["admission_date"],
+            "device_id": row["device_id"],
+            "device_type": row["device_type"],
+            "status": "stable",
         }
-        self._tick = 0
-        self._active_anomaly: str | None = None
-        self._anomaly_ticks_left = 0
-
-    def generate_reading(self, anomaly_rate: float) -> dict:
-        self._tick += 1
-
-        if self._anomaly_ticks_left > 0:
-            self._anomaly_ticks_left -= 1
-            if self._anomaly_ticks_left == 0:
-                self._active_anomaly = None
-        elif random.random() < anomaly_rate:
-            self._active_anomaly = random.choice(list(ANOMALY_PROFILES.keys()))
-            self._anomaly_ticks_left = random.randint(3, 12)
-
-        def drift(base: float, amp: float, period: float) -> float:
-            return base + amp * math.sin(2 * math.pi * self._tick / period)
-
-        hr = drift(self.baseline["heart_rate"], 3.0, 60)
-        sys_bp = drift(self.baseline["systolic_bp"], 5.0, 90)
-        dia_bp = drift(self.baseline["diastolic_bp"], 3.0, 90)
-        spo2 = drift(self.baseline["spo2"], 0.5, 120)
-        temp = drift(self.baseline["temperature"], 0.2, 200)
-        rr = drift(self.baseline["respiratory_rate"], 1.0, 45)
-
-        vals = {"heart_rate": hr, "systolic_bp": sys_bp, "diastolic_bp": dia_bp,
-                "spo2": spo2, "temperature": temp, "respiratory_rate": rr}
-
-        if self._active_anomaly:
-            profile = ANOMALY_PROFILES[self._active_anomaly]
-            progress = 1 - (self._anomaly_ticks_left / 12)
-            blend = min(1.0, progress * 1.5)
-            for key, (lo, hi) in profile.items():
-                vals[key] = vals[key] * (1 - blend) + random.uniform(lo, hi) * blend
-
-        for key in vals:
-            vals[key] += random.gauss(0, 1.0)
-
-        vals["spo2"] = max(70, min(100, vals["spo2"]))
-        vals["heart_rate"] = max(20, min(250, vals["heart_rate"]))
-        vals["systolic_bp"] = max(60, min(260, vals["systolic_bp"]))
-        vals["diastolic_bp"] = max(30, min(180, vals["diastolic_bp"]))
-        vals["temperature"] = max(90, min(110, vals["temperature"]))
-        vals["respiratory_rate"] = max(4, min(60, vals["respiratory_rate"]))
-
-        units = {
-            "heart_rate": "bpm", "systolic_bp": "mmHg", "diastolic_bp": "mmHg",
-            "spo2": "%", "temperature": "°F", "respiratory_rate": "breaths/min",
-        }
-
-        return {
-            "reading_id": str(uuid.uuid4()),
-            "patient_id": self.patient_id,
-            "device_id": self.device_id,
-            "device_type": self.device_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "vitals": {k: {"value": round(v, 1), "unit": units[k]} for k, v in vals.items()},
-            "anomaly": self._active_anomaly,
-        }
+        last_seen_ts[pid] = ""
 
 
-NUM_PATIENTS = 8
-ANOMALY_RATE = 0.15
-TICK_INTERVAL = 2.0
+def _calculate_age(dob_str: str) -> int:
+    from datetime import date
+    parts = dob_str.split("-")
+    dob = date(int(parts[0]), int(parts[1]), int(parts[2]))
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
-simulators: list[PatientSimulator] = []
 
-
-async def _simulation_loop() -> None:
+async def _poll_vitals_loop() -> None:
+    """Poll the DB for new vitals readings written by the generator."""
     while True:
-        for sim in simulators:
-            reading = sim.generate_reading(ANOMALY_RATE)
-            pid = sim.patient_id
+        conn = get_db()
+        for pid in list(patients.keys()):
+            ts = last_seen_ts.get(pid, "")
+            rows = conn.execute(
+                "SELECT * FROM vitals_readings "
+                "WHERE patient_id = ? AND timestamp > ? "
+                "ORDER BY timestamp ASC",
+                (pid, ts),
+            ).fetchall()
 
-            vitals_history[pid].append(reading)
-            if len(vitals_history[pid]) > MAX_HISTORY:
-                vitals_history[pid] = vitals_history[pid][-MAX_HISTORY:]
+            for row in rows:
+                reading = row_to_reading(row)
+                last_seen_ts[pid] = row["timestamp"]
 
-            alerts = detect_anomalies(reading)
+                vitals_history[pid].append(reading)
+                if len(vitals_history[pid]) > MAX_HISTORY:
+                    vitals_history[pid] = vitals_history[pid][-MAX_HISTORY:]
 
-            if alerts:
-                active_alerts[pid] = alerts
-                alert_history[pid].extend(alerts)
-                if len(alert_history[pid]) > 200:
-                    alert_history[pid] = alert_history[pid][-200:]
+                alerts = detect_anomalies(reading)
 
-                worst = max(alerts, key=lambda a: 1 if a["severity"] == "critical" else 0)
-                patients[pid]["status"] = worst["severity"]
-            else:
-                if active_alerts.get(pid):
-                    active_alerts[pid] = []
-                patients[pid]["status"] = "stable"
+                if alerts:
+                    active_alerts[pid] = alerts
+                    alert_history[pid].extend(alerts)
+                    if len(alert_history[pid]) > 200:
+                        alert_history[pid] = alert_history[pid][-200:]
+                    worst = max(alerts, key=lambda a: 1 if a["severity"] == "critical" else 0)
+                    patients[pid]["status"] = worst["severity"]
+                else:
+                    if active_alerts.get(pid):
+                        active_alerts[pid] = []
+                    patients[pid]["status"] = "stable"
 
-            await manager.broadcast({
-                "type": "vitals_update",
-                "patient_id": pid,
-                "reading": reading,
-                "alerts": alerts,
-                "status": patients[pid]["status"],
-            })
+                await manager.broadcast({
+                    "type": "vitals_update",
+                    "patient_id": pid,
+                    "reading": reading,
+                    "alerts": alerts,
+                    "status": patients[pid]["status"],
+                })
 
-        await asyncio.sleep(TICK_INTERVAL)
+        conn.close()
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    load_patients()
+    task = asyncio.create_task(_poll_vitals_loop())
+    yield
+    task.cancel()
+
+
+app = FastAPI(title="Vitals Streaming API", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------

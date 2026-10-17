@@ -185,6 +185,14 @@ export default function PatientDetail({ patients, vitalsHistory, alerts }) {
     return age < 30000;
   });
 
+  const distinctAlertTypes = activeAlerts
+    .map((a) =>
+      a.vital === "sepsis_screen"
+        ? "Sepsis Screen"
+        : VITAL_CONFIG[a.vital]?.label || a.vital
+    )
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+
   return (
     <div className="patient-detail">
       <div className="detail-header">
@@ -205,21 +213,16 @@ export default function PatientDetail({ patients, vitalsHistory, alerts }) {
         </span>
       </div>
 
-      {activeAlerts.length > 0 && (
+      {distinctAlertTypes.length > 0 && (
         <div className="active-alerts-banner">
           <div className="banner-icon">⚠</div>
           <div className="banner-text">
-            <strong>{activeAlerts.length} active alert{activeAlerts.length > 1 ? "s" : ""}</strong>
+            <strong>
+              {distinctAlertTypes.length} active alert
+              {distinctAlertTypes.length > 1 ? "s" : ""}
+            </strong>
             {" — "}
-            {activeAlerts
-              .map(
-                (a) =>
-                  (a.vital === "sepsis_screen"
-                    ? "Sepsis Screen"
-                    : VITAL_CONFIG[a.vital]?.label || a.vital)
-              )
-              .filter((v, i, arr) => arr.indexOf(v) === i)
-              .join(", ")}
+            {distinctAlertTypes.join(", ")}
           </div>
         </div>
       )}
