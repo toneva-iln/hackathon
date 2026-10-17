@@ -33,6 +33,12 @@ Open http://localhost:5173 — the dashboard connects automatically, no page ref
 docker compose up --build
 ```
 
+This starts three services:
+
+1. **generator** — seeds the patients table (first run only), then streams vitals into the shared `data/vitals.db`
+2. **api** — reads from the database, detects anomalies, broadcasts via WebSocket on port 8000
+3. **frontend** — dashboard on port 3000 (nginx reverse proxy to the API)
+
 Open http://localhost:3000.
 
 ## Architecture
@@ -64,6 +70,7 @@ hackathon/
 │           ├── Dashboard.jsx         # Patient list with alert badges
 │           └── PatientDetail.jsx     # Live charts + alert history
 └── scripts/
+    ├── Dockerfile                    # Generator container (seeds + streams)
     ├── seed_patients.py              # Seeds patients table with 12 RPM patients
     └── generate_vitals_stream.py     # Reads patients from DB, writes vitals to DB
 ```
@@ -143,7 +150,7 @@ alembic revision --autogenerate -m "description"
 - **Dashboard** — patient cards in stable positions with pulsing alert badges and live vital pills
 - **Patient detail** — 6 live-updating Recharts line charts with threshold reference lines, active alert banner, full alert history with clinical descriptions
 - **Auto-reconnect** — WebSocket reconnects on disconnect with visual indicator
-- **Dockerized** — single `docker compose up` runs everything behind an nginx reverse proxy
+- **Dockerized** — single `docker compose up` runs the generator, API, and frontend behind an nginx reverse proxy
 
 ## Anomaly Detection
 
