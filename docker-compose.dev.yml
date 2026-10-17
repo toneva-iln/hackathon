@@ -1,0 +1,42 @@
+services:
+  generator:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./db:/app/db
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./api/main.py:/app/main.py
+      - ./db:/app/db
+    depends_on:
+      - generator
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/patients')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/index.html:/app/index.html
+    depends_on:
+      api:
+        condition: service_healthy

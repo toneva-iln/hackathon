@@ -376,6 +376,12 @@ body {
   color: var(--text-primary);
 }
 
+.banner-window {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 /* Vitals grid */
 
 .vitals-grid {

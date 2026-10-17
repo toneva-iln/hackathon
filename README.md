@@ -27,7 +27,7 @@ npm run dev
 
 Open http://localhost:5173 — the dashboard connects automatically, no page refresh needed.
 
-## Quick Start (Docker)
+## Quick Start (Docker — Production)
 
 ```bash
 docker compose up --build
@@ -41,11 +41,26 @@ This starts three services:
 
 Open http://localhost:3000.
 
+## Quick Start (Docker — Development / Hot Reload)
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+Same ports, but source code is mounted as volumes so changes are picked up automatically — no rebuild needed:
+
+- **API** — uvicorn runs with `--reload`, watches `api/main.py` and `db/`
+- **Frontend** — Vite dev server with HMR, watches `frontend/src/`
+- **Generator** — scripts and db modules are mounted in; restart the container to pick up changes (`docker compose -f docker-compose.dev.yml restart generator`)
+
+Open http://localhost:3000.
+
 ## Architecture
 
 ```
 hackathon/
-├── docker-compose.yml
+├── docker-compose.yml                # Production (nginx + built assets)
+├── docker-compose.dev.yml            # Development (hot reload)
 ├── alembic.ini                       # Alembic config (points at data/vitals.db)
 ├── data/
 │   └── vitals.db                     # Shared SQLite database (gitignored)

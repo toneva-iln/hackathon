@@ -221,6 +221,7 @@ export default function PatientDetail({ patients, vitalsHistory, alerts }) {
               {distinctAlertTypes.length} active alert
               {distinctAlertTypes.length > 1 ? "s" : ""}
             </strong>
+            <span className="banner-window"> (last 30s)</span>
             {" — "}
             {distinctAlertTypes.join(", ")}
           </div>
