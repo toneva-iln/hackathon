@@ -353,63 +353,6 @@ body {
   color: var(--text-muted);
 }
 
-/* Crisis banner */
-
-.crisis-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 16px;
-  padding: 18px 24px;
-  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(220, 38, 38, 0.10));
-  border: 2px solid rgba(239, 68, 68, 0.6);
-  border-radius: 14px;
-  margin-bottom: 16px;
-  animation: crisis-pulse 1.5s ease-in-out infinite;
-}
-
-.crisis-icon {
-  font-size: 28px;
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.crisis-content {
-  flex: 1;
-}
-
-.crisis-title {
-  font-size: 15px;
-  font-weight: 800;
-  color: var(--red);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  margin-bottom: 4px;
-}
-
-.crisis-conditions {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 6px;
-}
-
-.crisis-action {
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
-@keyframes crisis-pulse {
-  0%, 100% {
-    border-color: rgba(239, 68, 68, 0.6);
-    box-shadow: 0 0 20px rgba(239, 68, 68, 0.08);
-  }
-  50% {
-    border-color: rgba(239, 68, 68, 1);
-    box-shadow: 0 0 30px rgba(239, 68, 68, 0.2);
-  }
-}
-
 /* Active alerts banner */
 
 .active-alerts-banner {

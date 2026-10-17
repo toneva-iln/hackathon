@@ -193,29 +193,6 @@ export default function PatientDetail({ patients, vitalsHistory, alerts }) {
     )
     .filter((v, i, arr) => arr.indexOf(v) === i);
 
-  const crisisAlerts = activeAlerts.filter(
-    (a) => a.vital === "sepsis_screen" || a.severity === "critical"
-  );
-  const crisisTypes = crisisAlerts
-    .map((a) => {
-      if (a.vital === "sepsis_screen") return "Sepsis";
-      const label = VITAL_CONFIG[a.vital]?.label || a.vital;
-      if (a.direction === "critical_high") return `${label} (critically high)`;
-      if (a.direction === "critical_low") return `${label} (critically low)`;
-      return label;
-    })
-    .filter((v, i, arr) => arr.indexOf(v) === i);
-
-  const nonCrisisTypes = distinctAlertTypes.filter(
-    (t) => !crisisTypes.some((c) => t.includes(c.split(" (")[0]))
-  );
-
-  const effectiveStatus = crisisTypes.length > 0
-    ? "critical"
-    : nonCrisisTypes.length > 0
-      ? "warning"
-      : "stable";
-
   return (
     <div className="patient-detail">
       <div className="detail-header">
@@ -231,39 +208,22 @@ export default function PatientDetail({ patients, vitalsHistory, alerts }) {
               ` · ${patient.device_type.replace(/_/g, " ")}`}
           </span>
         </div>
-        <span className={`status-badge large ${effectiveStatus}`}>
-          {effectiveStatus.toUpperCase()}
+        <span className={`status-badge large ${patient.status}`}>
+          {patient.status?.toUpperCase()}
         </span>
       </div>
 
-      {crisisTypes.length > 0 && (
-        <div className="crisis-banner">
-          <div className="crisis-icon">🚨</div>
-          <div className="crisis-content">
-            <div className="crisis-title">
-              CRISIS — IMMEDIATE ATTENTION REQUIRED
-            </div>
-            <div className="crisis-conditions">
-              {crisisTypes.join(" · ")}
-            </div>
-            <div className="crisis-action">
-              Assess patient immediately. Initiate emergency protocol.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {nonCrisisTypes.length > 0 && (
+      {distinctAlertTypes.length > 0 && (
         <div className="active-alerts-banner">
           <div className="banner-icon">⚠</div>
           <div className="banner-text">
             <strong>
-              {nonCrisisTypes.length} active alert
-              {nonCrisisTypes.length > 1 ? "s" : ""}
+              {distinctAlertTypes.length} active alert
+              {distinctAlertTypes.length > 1 ? "s" : ""}
             </strong>
             <span className="banner-window"> (last 30s)</span>
             {" — "}
-            {nonCrisisTypes.join(", ")}
+            {distinctAlertTypes.join(", ")}
           </div>
         </div>
       )}

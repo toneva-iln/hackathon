@@ -163,7 +163,6 @@ alembic revision --autogenerate -m "description"
 - **Real-time streaming** — API polls DB for new readings every second, pushes via WebSocket
 - **Live anomaly detection** — threshold-based alerts for all 6 vitals + sepsis screening (SIRS criteria)
 - **Dashboard** — patient cards in stable positions with pulsing alert badges and live vital pills
-- **Crisis banner** — dedicated high-visibility banner with pulsing red border for life-threatening conditions (sepsis screening, any critical-severity vital). Shows the specific crisis conditions and an action prompt ("Assess patient immediately. Initiate emergency protocol."). Displayed separately above the standard alerts banner so it cannot be missed
 - **Patient detail** — 6 live-updating Recharts line charts with threshold reference lines, active alert banner, full alert history with clinical descriptions
 - **Auto-reconnect** — WebSocket reconnects on disconnect with visual indicator
 - **Dockerized** — single `docker compose up` runs the generator, API, and frontend behind an nginx reverse proxy
@@ -183,9 +182,6 @@ Threshold-based detection with two severity levels:
 
 **Sepsis screening:** triggers when 3+ SIRS criteria are met simultaneously (HR >90, temp abnormal, RR >20, systolic BP <100).
 
-### Crisis Banner
-
-When sepsis screening fires or any vital reaches critical severity, a dedicated crisis banner appears at the top of the patient detail view — visually distinct from standard alerts with a pulsing red border, a 🚨 icon, and the headline "CRISIS — IMMEDIATE ATTENTION REQUIRED". The banner lists the specific crisis conditions (e.g. "Sepsis · Heart Rate (critically high) · SpO2 (critically low)") and prompts immediate clinical action. Non-crisis warnings (standard threshold alerts) are shown separately in the regular alerts banner below.
 
 ## API Endpoints
 
