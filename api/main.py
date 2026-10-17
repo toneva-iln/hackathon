@@ -17,22 +17,31 @@ from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.orm import Session
 
-import sqlite3
 import os
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from db.models import Patient, VitalsReading
 
 DB_PATH = os.environ.get(
     "VITALS_DB_PATH",
     str(Path(__file__).resolve().parent.parent / "data" / "vitals.db"),
 )
 
+engine = create_engine(
+    f"sqlite:///{DB_PATH}",
+    connect_args={"check_same_thread": False},
+    pool_pre_ping=True,
+)
 
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+with engine.connect() as conn:
+    conn.execute(text("PRAGMA journal_mode=WAL"))
+    conn.execute(text("PRAGMA busy_timeout=5000"))
+    conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -106,23 +115,23 @@ SEPSIS_SCREEN_CRITERIA = {
 }
 
 
-def row_to_reading(row: sqlite3.Row) -> dict:
-    """Convert a DB row into the reading dict used throughout the API."""
+def vitals_reading_to_dict(r: VitalsReading) -> dict:
+    """Convert a VitalsReading ORM instance into the reading dict used throughout the API."""
     return {
-        "reading_id": row["id"],
-        "patient_id": row["patient_id"],
-        "device_id": row["device_id"],
-        "device_type": row["device_type"],
-        "timestamp": row["timestamp"],
+        "reading_id": r.id,
+        "patient_id": r.patient_id,
+        "device_id": r.device_id,
+        "device_type": r.device_type,
+        "timestamp": r.timestamp,
         "vitals": {
-            "heart_rate": {"value": row["heart_rate"], "unit": "bpm"},
-            "systolic_bp": {"value": row["systolic_bp"], "unit": "mmHg"},
-            "diastolic_bp": {"value": row["diastolic_bp"], "unit": "mmHg"},
-            "spo2": {"value": row["spo2"], "unit": "%"},
-            "temperature": {"value": row["temperature"], "unit": "°F"},
-            "respiratory_rate": {"value": row["respiratory_rate"], "unit": "breaths/min"},
+            "heart_rate": {"value": r.heart_rate, "unit": "bpm"},
+            "systolic_bp": {"value": r.systolic_bp, "unit": "mmHg"},
+            "diastolic_bp": {"value": r.diastolic_bp, "unit": "mmHg"},
+            "spo2": {"value": r.spo2, "unit": "%"},
+            "temperature": {"value": r.temperature, "unit": "°F"},
+            "respiratory_rate": {"value": r.respiratory_rate, "unit": "breaths/min"},
         },
-        "anomaly": row["anomaly"],
+        "anomaly": r.anomaly,
     }
 
 
@@ -226,32 +235,26 @@ manager = ConnectionManager()
 # ---------------------------------------------------------------------------
 
 def load_patients() -> None:
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT id, first_name, last_name, date_of_birth, sex, room, "
-        "primary_diagnosis, admission_date, device_id, device_type "
-        "FROM patients ORDER BY last_name, first_name"
-    ).fetchall()
-    conn.close()
+    stmt = select(Patient).order_by(Patient.last_name, Patient.first_name)
 
-    for row in rows:
-        pid = row["id"]
-        patients[pid] = {
-            "patient_id": pid,
-            "name": f"{row['first_name']} {row['last_name']}",
-            "first_name": row["first_name"],
-            "last_name": row["last_name"],
-            "date_of_birth": row["date_of_birth"],
-            "sex": row["sex"],
-            "age": _calculate_age(row["date_of_birth"]),
-            "room": row["room"],
-            "primary_diagnosis": row["primary_diagnosis"],
-            "admission_date": row["admission_date"],
-            "device_id": row["device_id"],
-            "device_type": row["device_type"],
-            "status": "stable",
-        }
-        last_seen_ts[pid] = ""
+    with Session(engine) as session:
+        for p in session.scalars(stmt):
+            patients[p.id] = {
+                "patient_id": p.id,
+                "name": f"{p.first_name} {p.last_name}",
+                "first_name": p.first_name,
+                "last_name": p.last_name,
+                "date_of_birth": p.date_of_birth,
+                "sex": p.sex,
+                "age": _calculate_age(p.date_of_birth),
+                "room": p.room,
+                "primary_diagnosis": p.primary_diagnosis,
+                "admission_date": p.admission_date,
+                "device_id": p.device_id,
+                "device_type": p.device_type,
+                "status": "stable",
+            }
+            last_seen_ts[p.id] = ""
 
 
 def _calculate_age(dob_str: str) -> int:
@@ -265,47 +268,46 @@ def _calculate_age(dob_str: str) -> int:
 async def _poll_vitals_loop() -> None:
     """Poll the DB for new vitals readings written by the generator."""
     while True:
-        conn = get_db()
-        for pid in list(patients.keys()):
-            ts = last_seen_ts.get(pid, "")
-            rows = conn.execute(
-                "SELECT * FROM vitals_readings "
-                "WHERE patient_id = ? AND timestamp > ? "
-                "ORDER BY timestamp ASC",
-                (pid, ts),
-            ).fetchall()
+        with Session(engine) as session:
+            for pid in list(patients.keys()):
+                ts = last_seen_ts.get(pid, "")
+                stmt = (
+                    select(VitalsReading)
+                    .where(VitalsReading.patient_id == pid)
+                    .where(VitalsReading.timestamp > ts)
+                    .order_by(VitalsReading.timestamp.asc())
+                )
 
-            for row in rows:
-                reading = row_to_reading(row)
-                last_seen_ts[pid] = row["timestamp"]
+                for row in session.scalars(stmt):
+                    reading = vitals_reading_to_dict(row)
+                    last_seen_ts[pid] = row.timestamp
 
-                vitals_history[pid].append(reading)
-                if len(vitals_history[pid]) > MAX_HISTORY:
-                    vitals_history[pid] = vitals_history[pid][-MAX_HISTORY:]
+                    vitals_history[pid].append(reading)
+                    if len(vitals_history[pid]) > MAX_HISTORY:
+                        vitals_history[pid] = vitals_history[pid][-MAX_HISTORY:]
 
-                alerts = detect_anomalies(reading)
+                    alerts = detect_anomalies(reading)
 
-                if alerts:
-                    active_alerts[pid] = alerts
-                    alert_history[pid].extend(alerts)
-                    if len(alert_history[pid]) > 200:
-                        alert_history[pid] = alert_history[pid][-200:]
-                    worst = max(alerts, key=lambda a: 1 if a["severity"] == "critical" else 0)
-                    patients[pid]["status"] = worst["severity"]
-                else:
-                    if active_alerts.get(pid):
-                        active_alerts[pid] = []
-                    patients[pid]["status"] = "stable"
+                    if alerts:
+                        active_alerts[pid] = alerts
+                        alert_history[pid].extend(alerts)
+                        if len(alert_history[pid]) > 200:
+                            alert_history[pid] = alert_history[pid][-200:]
+                        worst = max(alerts, key=lambda a: 1 if a["severity"] == "critical" else 0)
+                        patients[pid]["status"] = worst["severity"]
+                    else:
+                        if active_alerts.get(pid):
+                            active_alerts[pid] = []
+                        patients[pid]["status"] = "stable"
 
-                await manager.broadcast({
-                    "type": "vitals_update",
-                    "patient_id": pid,
-                    "reading": reading,
-                    "alerts": alerts,
-                    "status": patients[pid]["status"],
-                })
+                    await manager.broadcast({
+                        "type": "vitals_update",
+                        "patient_id": pid,
+                        "reading": reading,
+                        "alerts": alerts,
+                        "status": patients[pid]["status"],
+                    })
 
-        conn.close()
         await asyncio.sleep(POLL_INTERVAL)
 
 

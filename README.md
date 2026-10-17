@@ -221,3 +221,36 @@ This is the difference between **surveillance** and **intelligence**. The device
 ### Revenue model
 
 Remote Patient Monitoring is directly reimbursable by CMS under CPT codes 99453–99458, covering device setup, patient education, and ongoing monitoring time. Hospitals with RPM programs also reduce 30-day readmission rates, avoiding CMS penalties under the Hospital Readmissions Reduction Program (HRRP). The platform pays for itself through avoided readmissions and generates net-new revenue through RPM billing.
+
+## Glossary
+
+| Term | Definition |
+|---|---|
+| **Atrial fibrillation (AFib)** | An irregular, often rapid heart rhythm originating in the upper chambers (atria) of the heart. Increases stroke risk. |
+| **Bradycardia** | Abnormally slow heart rate, typically below 60 bpm at rest. Can indicate heart block, medication side effects, or hypothyroidism. |
+| **Bradypnea** | Abnormally slow respiratory rate, typically below 12 breaths per minute. May indicate CNS depression or opioid overdose. |
+| **CABG** | Coronary Artery Bypass Grafting — open-heart surgery that reroutes blood around blocked coronary arteries. Patients require close post-surgical monitoring. |
+| **CMS** | Centers for Medicare & Medicaid Services — the U.S. federal agency that administers Medicare and Medicaid. Sets reimbursement rules for RPM programs. |
+| **COPD** | Chronic Obstructive Pulmonary Disease — a group of progressive lung diseases (emphysema, chronic bronchitis) that cause airflow obstruction and breathing difficulty. |
+| **CPT codes (99453–99458)** | Current Procedural Terminology billing codes used to reimburse Remote Patient Monitoring services: device setup, patient education, data collection, and clinical review time. |
+| **Diastolic blood pressure** | The lower number in a blood pressure reading (e.g. the 80 in 120/80). Measures the pressure in arteries when the heart rests between beats. Normal range: 60–90 mmHg. |
+| **DVT** | Deep Vein Thrombosis — a blood clot forming in a deep vein, usually in the leg. A risk after surgery or prolonged immobility. Can be life-threatening if the clot travels to the lungs (pulmonary embolism). |
+| **Heart rate (HR)** | The number of times the heart beats per minute (bpm). Normal resting range for adults: 60–100 bpm. |
+| **HRRP** | Hospital Readmissions Reduction Program — a CMS program that penalizes hospitals with excess 30-day readmission rates for certain conditions. |
+| **Hyperpyrexia** | Extremely high fever, typically above 103°F (39.4°C). A medical emergency with risk of organ damage. |
+| **Hypertension** | Persistently elevated blood pressure (systolic >140 or diastolic >90 mmHg). A major risk factor for stroke, heart attack, and kidney disease. |
+| **Hypertensive crisis** | A severe, acute elevation in blood pressure (systolic >180 and/or diastolic >120 mmHg). Requires immediate medical intervention to prevent organ damage. |
+| **Hypotension** | Abnormally low blood pressure (systolic <90 mmHg). Can cause dizziness, fainting, and in severe cases, shock and organ failure. |
+| **Hypothermia** | Body temperature below 95°F (35°C). Can cause cardiac arrhythmia, confusion, and organ failure. |
+| **Hypoxemia** | Abnormally low oxygen level in the blood, typically SpO2 below 90%. Indicates respiratory compromise requiring supplemental oxygen. |
+| **mmHg** | Millimeters of mercury — the standard unit for measuring blood pressure. |
+| **Pulse oximeter** | A non-invasive device, typically clipped to a fingertip, that measures SpO2 and heart rate by shining light through the skin to detect oxygen levels in hemoglobin. |
+| **Respiratory rate (RR)** | The number of breaths a person takes per minute. Normal adult range: 12–20 breaths/min. |
+| **RPM** | Remote Patient Monitoring — the practice of using connected devices (BP cuffs, pulse oximeters, scales) to track a patient's vitals from their home, reviewed remotely by clinical staff. |
+| **Sepsis** | A life-threatening organ dysfunction caused by the body's dysregulated response to infection. Early detection is critical — mortality increases ~8% for every hour treatment is delayed. |
+| **SIRS criteria** | Systemic Inflammatory Response Syndrome — a set of clinical signs used to screen for sepsis: (1) HR >90 bpm, (2) temperature >100.4°F or <96.8°F, (3) respiratory rate >20/min, (4) WBC count abnormal. Meeting 2+ criteria with suspected infection suggests sepsis. This platform checks the first four non-lab criteria. |
+| **SpO2** | Peripheral capillary oxygen saturation — the percentage of hemoglobin in the blood that is carrying oxygen, measured by a pulse oximeter. Normal range: 95–100%. |
+| **Systolic blood pressure** | The upper number in a blood pressure reading (e.g. the 120 in 120/80). Measures the peak pressure in arteries when the heart contracts. Normal range: 90–140 mmHg. |
+| **Tachycardia** | Abnormally fast heart rate, typically above 100 bpm at rest. Can indicate stress, fever, dehydration, arrhythmia, or early sepsis. |
+| **Tachypnea** | Abnormally rapid respiratory rate, typically above 20 breaths per minute. May indicate respiratory distress, pain, metabolic acidosis, or sepsis. |
+| **WAL mode** | Write-Ahead Logging — a SQLite journaling mode that allows concurrent reads and writes. Used in this platform so the generator can write while the API reads simultaneously. |
