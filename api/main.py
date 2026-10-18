@@ -379,6 +379,31 @@ async def get_alerts(patient_id: str) -> dict:
     }
 
 
+@app.get("/api/export")
+async def export_readings(limit: int = 500) -> list[dict]:
+    """Export raw vitals readings from the database as JSON."""
+    with Session(engine) as session:
+        stmt = (
+            select(VitalsReading)
+            .order_by(VitalsReading.timestamp.desc())
+            .limit(limit)
+        )
+        return [vitals_reading_to_dict(r) for r in session.scalars(stmt)]
+
+
+@app.get("/api/export/{patient_id}")
+async def export_patient_readings(patient_id: str, limit: int = 500) -> list[dict]:
+    """Export raw vitals readings for a single patient as JSON."""
+    with Session(engine) as session:
+        stmt = (
+            select(VitalsReading)
+            .where(VitalsReading.patient_id == patient_id)
+            .order_by(VitalsReading.timestamp.desc())
+            .limit(limit)
+        )
+        return [vitals_reading_to_dict(r) for r in session.scalars(stmt)]
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
     await manager.connect(ws)
